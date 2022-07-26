@@ -14,8 +14,8 @@
       "type": "bool",
       "default": "false",
       "items": [
-        "false",
-        "true"
+        "true",
+        "false"
       ]
     },
     {
@@ -25,8 +25,8 @@
       "type": "text",
       "default": "raft",
       "items": [
-        "raft",
-        "consul"
+        "consul",
+        "raft"
       ]
     },
     {
@@ -95,8 +95,8 @@
       "type": "bool",
       "default": "false",
       "items": [
-        "false",
-        "true"
+        "true",
+        "false"
       ]
     },
     {
