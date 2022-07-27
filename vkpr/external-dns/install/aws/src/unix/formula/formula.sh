@@ -9,6 +9,7 @@ runFormula() {
   VKPR_EXTERNAL_DNS_VALUES="$(dirname "$0")"/utils/external-dns.yaml
 
   startInfos
+  installCRDS
   settingExternalDNS
   [[ $DRY_RUN == false ]] && registerHelmRepository bitnami https://charts.bitnami.com/bitnami
   installApplication "external-dns" "bitnami/external-dns" "$VKPR_ENV_EXTERNAL_DNS_NAMESPACE" "$VKPR_EXTERNAL_DNS_VERSION" "$VKPR_EXTERNAL_DNS_VALUES" "$HELM_ARGS"
@@ -36,6 +37,11 @@ validateInputs() {
   validateAwsAccessKey "$AWS_ACCESS_KEY"
   validateAwsSecretKey "$AWS_SECRET_KEY"
   validateAwsRegion "$AWS_REGION"
+}
+
+installCRDS() {
+  info "Installing External DNS CRDS beforehand..."
+  $VKPR_KUBECTL apply -f "https://raw.githubusercontent.com/kubernetes-sigs/external-dns/master/docs/contributing/crd-source/crd-manifest.yaml"
 }
 
 settingExternalDNS() {

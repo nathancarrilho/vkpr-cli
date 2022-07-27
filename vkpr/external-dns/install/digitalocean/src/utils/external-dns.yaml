@@ -5,3 +5,4 @@ interval: "1m"
 policy: sync
 podLabels:
   app.kubernetes.io/managed-by: vkpr
+extraArgs:
