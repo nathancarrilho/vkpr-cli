@@ -37,6 +37,7 @@ formulaInputs() {
   checkGlobalConfig "$ISSUER" "staging" "cert-manager.issuer.type" "CERT_MANAGER_ISSUER_TYPE"
   checkGlobalConfig "$ISSUER_SOLVER" "DNS01" "cert-manager.issuer.solver" "CERT_MANAGER_ISSUER_SOLVER"
   checkGlobalConfig "nginx" "nginx" "cert-manager.issuer.ingress" "CERT_MANAGER_ISSUER_INGRESS"
+  checkGlobalConfig "false" "false" "cert-manager.metrics" "CERT_MANAGER_METRICS"
   # Todo: find why cert-manager doesnt work in another namespace
   #checkGlobalConfig "cert-manager" "cert-manager" "cert-manager.namespace" "CERT_MANAGER_NAMESPACE"
   VKPR_ENV_CERT_MANAGER_NAMESPACE="cert-manager"
@@ -66,6 +67,18 @@ settingCertManager() {
 
   debug "YQ_CONTENT = $YQ_VALUES"
 }
+
+  if [[ "$VKPR_ENV_CERT_MANAGER_METRICS" == true ]]; then
+    createGrafanaDashboard "$(dirname "$0")/utils/dashboard.json" "$VKPR_ENV_GRAFANA_NAMESPACE"
+    YQ_VALUES="$YQ_VALUES |
+      .prometheus.enabled = true |
+      .prometheus.servicemonitor.enabled = true |
+      .prometheus.servicemonitor.namespace = \"$VKPR_ENV_CERT_MANAGER_NAMESPACE\" |
+      .prometheus.servicemonitor.prometheusInstance = \"default\" |
+      .prometheus.servicemonitor.interval = \"30s\" |
+      .prometheus.servicemonitor.scrapeTimeout = \"30s\"
+    "
+  fi
 
 installIssuer() {
   boldInfo "Installing Issuers and/or ClusterIssuers..."
