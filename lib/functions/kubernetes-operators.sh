@@ -70,15 +70,21 @@ createGrafanaDashboard() {
 
   GRAFANA_ADDRESS="grafana.${VKPR_ENV_GLOBAL_DOMAIN}"
   [[ $VKPR_ENV_GLOBAL_DOMAIN == "localhost" ]] && GRAFANA_ADDRESS="grafana.localhost:8000"
-
+  debug "GRAFANA ADDRESS = $GRAFANA_ADDRESS"
   CREATE_DASHBOARD=$(curl -s -X POST -H "Content-Type: application/json" \
     -d @/tmp/dashboard-grafana.json http://$LOGIN_GRAFANA:$PWD_GRAFANA@$GRAFANA_ADDRESS/api/dashboards/db |\
     $VKPR_JQ -r '.status' -
   )
-  debug "$CREATE_DASHBOARD"
+  
+  debug "STATUS = $CREATE_DASHBOARD"
 
-  if [[ $CREATE_DASHBOARD == "name-exists" ]] || [[ $CREATE_DASHBOARD == "" ]]; then
+  if [[ $CREATE_DASHBOARD == "name-exists" ]]; then
     error "Dashboard with same name already exists"
+    return
+  fi
+
+  if [[ $CREATE_DASHBOARD == "" ]]; then
+    error "Unreachable grafana api"
     return
   fi
 
@@ -104,4 +110,16 @@ createDOCredentialSecret() {
   fi
 
   $VKPR_KUBECTL create secret generic vkpr-do-credential -n $1 --from-literal=api-token=$2
+}
+
+execScriptsOnPod() {
+  local SCRIPT_PATH=$1 POD_NAME=$2 \
+    POD_NAMESPACE=$3
+
+  $VKPR_KUBECTL cp "$SCRIPT_PATH" "$POD_NAME":tmp/script.sh -n "$POD_NAMESPACE"
+  $VKPR_KUBECTL exec -it "$POD_NAME" -n "$POD_NAMESPACE" -- sh -c "
+    chmod +x /tmp/script.sh && \
+    sh /tmp/script.sh && \
+    rm /tmp/script.sh
+  "
 }

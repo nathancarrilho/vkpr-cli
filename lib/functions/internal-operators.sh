@@ -19,7 +19,7 @@ checkGlobalConfig(){
 
   if [ -f "$VKPR_FILE" ] && [ "$($VKPR_YQ eval "$VALUES_LABEL_PATH" "$VKPR_FILE")" != "null" ]; then
     warn "Setting value from config file: $ENV_NAME"
-    eval "$ENV_NAME"="$($VKPR_YQ eval "$VALUES_LABEL_PATH" "$VKPR_FILE")"
+    eval "$ENV_NAME"=\"$($VKPR_YQ eval "$VALUES_LABEL_PATH | . style=\"flow\"" "$VKPR_FILE")\"
     return
   fi
 
@@ -37,8 +37,8 @@ checkGlobalConfig(){
 }
 
 globalInputs() {
-  checkGlobalConfig "$DOMAIN" "localhost" "global.domain" "GLOBAL_DOMAIN"
-  checkGlobalConfig "$SECURE" "false" "global.secure" "GLOBAL_SECURE"
+  checkGlobalConfig "${DOMAIN:-localhost}" "localhost" "global.domain" "GLOBAL_DOMAIN"
+  checkGlobalConfig "${SECURE:-false}" "false" "global.secure" "GLOBAL_SECURE"
   checkGlobalConfig "nginx" "nginx" "global.ingressClassName" "GLOBAL_INGRESS_CLASS_NAME"
   checkGlobalConfig "vkpr" "vkpr" "global.namespace" "GLOBAL_NAMESPACE"
   checkGlobalConfig "" "" "global.provider" "GLOBAL_PROVIDER"

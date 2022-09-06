@@ -10,12 +10,12 @@ runFormula() {
 
   startInfos
   if [ $DRY_RUN = false ]; then
-    configureKeycloakDB
+    [[ "$VKPR_ENVIRONMENT" != "okteto" ]] && configureKeycloakDB
     registerHelmRepository bitnami https://charts.bitnami.com/bitnami
   fi
   settingKeycloak
   installApplication "keycloak" "bitnami/keycloak" "$VKPR_ENV_KEYCLOAK_NAMESPACE" "$VKPR_KEYCLOAK_VERSION" "$VKPR_KEYCLOAK_VALUES" "$HELM_ARGS"
-  activateMetrics
+  startupScripts
 }
 
 startInfos() {
@@ -40,9 +40,18 @@ formulaInputs() {
   checkGlobalConfig "false" "false" "keycloak.metrics" "KEYCLOAK_METRICS"
   checkGlobalConfig "$VKPR_ENV_GLOBAL_NAMESPACE" "$VKPR_ENV_GLOBAL_NAMESPACE" "keycloak.namespace" "KEYCLOAK_NAMESPACE"
   checkGlobalConfig "$SSL" "false" "keycloak.ssl.enabled" "KEYCLOAK_SSL"
-  checkGlobalConfig "$CRT_FILE" "" "keycloak.ssl.crt" "KEYCLOAK_CERTIFICATE"
-  checkGlobalConfig "$KEY_FILE" "" "keycloak.ssl.key" "KEYCLOAK_KEY"
+  checkGlobalConfig "$CRT_FILE" "" "keycloak.ssl.crt" "KEYCLOAK_SSL_CERTIFICATE"
+  checkGlobalConfig "$KEY_FILE" "" "keycloak.ssl.key" "KEYCLOAK_SSL_KEY"
   checkGlobalConfig "" "" "keycloak.ssl.secretName" "KEYCLOAK_SSL_SECRET"
+
+  # Integrate
+  checkGlobalConfig "false" "false" "keycloak.openid.grafana.enabled" "KEYCLOAK_OPENID_GRAFANA"
+  checkGlobalConfig "" "" "keycloak.openid.grafana.clientSecret" "KEYCLOAK_OPENID_GRAFANA_CLIENTSECRET"
+  checkGlobalConfig "" "" "keycloak.openid.grafana.identityProviders" "KEYCLOAK_OPENID_GRAFANA_IDENTITY_PROVIDERS"
+
+  checkGlobalConfig "false" "false" "keycloak.openid.kong.enabled" "KEYCLOAK_OPENID_KONG"
+  checkGlobalConfig "" "" "keycloak.openid.kong.clientSecret" "KEYCLOAK_OPENID_KONG_CLIENTSECRET"
+  checkGlobalConfig "" "" "keycloak.openid.kong.identityProviders" "KEYCLOAK_OPENID_KONG_IDENTITY_PROVIDERS"
 
   # External apps values
   checkGlobalConfig "$VKPR_ENV_GLOBAL_NAMESPACE" "$VKPR_ENV_GLOBAL_NAMESPACE" "postgresql.namespace" "POSTGRESQL_NAMESPACE"
@@ -50,7 +59,6 @@ formulaInputs() {
 }
 
 validateInputs() {
-
   validateKeycloakDomain "$DOMAIN"
   validateKeycloakSecure "$SECURE"
 
@@ -63,8 +71,8 @@ validateInputs() {
   validateKeycloakMetrics "$VKPR_ENV_KEYCLOAK_METRICS"
   validateKeycloakSsl "$VKPR_ENV_KEYCLOAK_SSL"
   if [[ $VKPR_ENV_KEYCLOAK_SSL == true ]]; then
-    validateKeycloakCrt "$VKPR_ENV_KEYCLOAK_CERTIFICATE"
-    validateKeycloakKey "$VKPR_ENV_KEYCLOAK_KEY"
+    validateKeycloakCrt "$VKPR_ENV_KEYCLOAK_SSL_CERTIFICATE"
+    validateKeycloakKey "$VKPR_ENV_KEYCLOAK_SSL_KEY"
   fi
   validatePostgresqlNamespace "$VKPR_ENV_POSTGRESQL_NAMESPACE"
   validatePrometheusNamespace "$VKPR_ENV_GRAFANA_NAMESPACE"
@@ -122,7 +130,7 @@ settingKeycloak(){
     "
   fi
 
-  if [[ $VKPR_ENV_KEYCLOAK_METRICS == "true" ]]; then
+  if [[ $VKPR_ENV_KEYCLOAK_METRICS == "true" ]] && [[ $(checkPodName "$VKPR_ENV_GRAFANA_NAMESPACE" "prometheus-stack-grafana") == "true" ]]; then
     createGrafanaDashboard "$(dirname "$0")/utils/dashboard.json" "$VKPR_ENV_GRAFANA_NAMESPACE"
     $VKPR_KUBECTL apply -n $VKPR_ENV_KEYCLOAK_NAMESPACE -f "$(dirname "$0")"/utils/servicemonitor.yaml
     YQ_VALUES="$YQ_VALUES |
@@ -140,8 +148,8 @@ settingKeycloak(){
   fi
 
   if [[ "$VKPR_ENV_KEYCLOAK_SSL" == "true" ]]; then
-    KEYCLOAK_TLS_KEY=$(cat $VKPR_ENV_KEYCLOAK_KEY)
-    KEYCLOAK_TLS_CERT=$(cat $VKPR_ENV_KEYCLOAK_CERTIFICATE)
+    KEYCLOAK_TLS_KEY=$(cat $VKPR_ENV_KEYCLOAK_SSL_KEY)
+    KEYCLOAK_TLS_CERT=$(cat $VKPR_ENV_KEYCLOAK_SSL_CERTIFICATE)
     if [[ "$VKPR_ENV_KEYCLOAK_SSL_SECRET" != "" ]]; then
       KEYCLOAK_TLS_KEY=$($VKPR_KUBECTL get secret $VKPR_ENV_KEYCLOAK_SSL_SECRET -o=jsonpath="{.data.tls\.key}" -n $VKPR_ENV_KEYCLOAK_NAMESPACE | base64 -d)
       KEYCLOAK_TLS_CERT=$($VKPR_KUBECTL get secret $VKPR_ENV_KEYCLOAK_SSL_SECRET -o=jsonpath="{.data.tls\.crt}" -n $VKPR_ENV_KEYCLOAK_NAMESPACE | base64 -d)
@@ -152,16 +160,96 @@ settingKeycloak(){
       .ingress.secrets[0].certificate = \"$KEYCLOAK_TLS_CERT\"
      "
   fi
+
+  settingKeycloakProvider
+
+  debug "YQ_CONTENT = $YQ_VALUES"
 }
 
-activateMetrics() {
-  if [[ $VKPR_ENV_KEYCLOAK_METRICS == "true" ]]; then
-    $VKPR_KUBECTL exec -it keycloak-0 -n "$VKPR_ENV_KEYCLOAK_NAMESPACE" -- sh -c "
-      kcadm.sh config credentials --server http://localhost:8080 --realm master \
-        --user $VKPR_ENV_KEYCLOAK_ADMIN_USER --password $VKPR_ENV_KEYCLOAK_ADMIN_PASSWORD --config /tmp/kcadm.config && \
-      kcadm.sh update events/config \
-        -s \"eventsEnabled=true\" -s \"adminEventsEnabled=true\" -s \"eventsListeners+=metrics-listener\" --config /tmp/kcadm.config && \
-      rm -f /tmp/kcadm.config
+settingKeycloakProvider() {
+  if [[ "$VKPR_ENVIRONMENT" == "okteto" ]]; then
+    HELM_ARGS="--cleanup-on-fail"
+    YQ_VALUES="$YQ_VALUES |
+      del(.externalDatabase) |
+      .proxy = \"edge\" |
+      .postgresql.enabled = true |
+      .postgresql.persistence.enabled = true |
+      .postgresql.persistence.size = \"1Gi\" |
+      .service.annotations.[\"dev.okteto.com/auto-ingress\"] = \"true\"
     "
+  fi
+}
+
+startupScripts() {
+  if [[ $VKPR_ENV_KEYCLOAK_METRICS == "true" ]]; then
+    sed -i "s/LOGIN_USERNAME/$VKPR_ENV_KEYCLOAK_ADMIN_USER/g ;
+      s/LOGIN_PASSWORD/$VKPR_ENV_KEYCLOAK_ADMIN_PASSWORD/g
+    " "$(dirname "$0")"/src/lib/scripts/keycloak/enable-metrics.sh
+    execScriptsOnPod "$(dirname "$0")"/src/lib/scripts/keycloak/enable-metrics.sh "keycloak-0" "$VKPR_ENV_KEYCLOAK_NAMESPACE"
+  fi
+
+  if [[ $VKPR_ENV_KEYCLOAK_OPENID_GRAFANA == "true" ]]; then
+    if [[ $VKPR_ENV_GLOBAL_DOMAIN == "localhost" ]]; then
+      GRAFANA_ADDRESS="http\:\/\/grafana.localhost\:8000"
+      GRAFANA_ADDRESS_BASE="http\:\/\/grafana.localhost"
+    else
+      GRAFANA_ADDRESS="https\:\/\/grafana.${VKPR_ENV_GLOBAL_DOMAIN}"
+      GRAFANA_ADDRESS_BASE="http\:\/\/grafana.${VKPR_ENV_GLOBAL_DOMAIN}"
+    fi
+
+    sed -i "s/LOGIN_USERNAME/$VKPR_ENV_KEYCLOAK_ADMIN_USER/g ;
+      s/LOGIN_PASSWORD/$VKPR_ENV_KEYCLOAK_ADMIN_PASSWORD/g ;
+      s/TEMPORARY_PASSWORD/$VKPR_ENV_KEYCLOAK_ADMIN_PASSWORD/g ;
+      s/CLIENT_SECRET/${VKPR_ENV_KEYCLOAK_OPENID_GRAFANA_CLIENTSECRET:-$(uuidgen)}/g ;
+      s/GRAFANA_DOMAIN/$GRAFANA_ADDRESS/g ;
+      s/GRAFANA_ADDRESS_BASE/$GRAFANA_ADDRESS_BASE/g" "$(dirname "$0")"/src/lib/scripts/keycloak/grafana-oidc.sh
+    execScriptsOnPod "$(dirname "$0")"/src/lib/scripts/keycloak/grafana-oidc.sh "keycloak-0" "$VKPR_ENV_KEYCLOAK_NAMESPACE"
+
+    if [[ $VKPR_ENV_KEYCLOAK_OPENID_GRAFANA_IDENTITY_PROVIDERS != "" ]]; then
+      IDP_LENGTH=$(echo $VKPR_ENV_KEYCLOAK_OPENID_GRAFANA_IDENTITY_PROVIDERS | $VKPR_YQ eval '. | length' -)
+      ((IDP_LENGTH--))
+      for i in $(seq 0 $IDP_LENGTH); do
+        IDP_NAME=$(echo $VKPR_ENV_KEYCLOAK_OPENID_GRAFANA_IDENTITY_PROVIDERS | $VKPR_YQ eval ".[$i].name" -)
+        IDP_CLIENTID=$(echo $VKPR_ENV_KEYCLOAK_OPENID_GRAFANA_IDENTITY_PROVIDERS | $VKPR_YQ eval ".[$i].clientID" -)
+        IDP_CLIENTSECRET=$(echo $VKPR_ENV_KEYCLOAK_OPENID_GRAFANA_IDENTITY_PROVIDERS | $VKPR_YQ eval ".[$i].clientSecret" -)
+
+        sed "s/LOGIN_USERNAME/$VKPR_ENV_KEYCLOAK_ADMIN_USER/g ;
+          s/LOGIN_PASSWORD/$VKPR_ENV_KEYCLOAK_ADMIN_PASSWORD/g ;
+          s/REALM_NAME/grafana/g ;
+          s/PROVIDER_NAME/$IDP_NAME/g ;
+          s/CLIENT_ID/$IDP_CLIENTID/g ;
+          s/CLIENT_SECRET/$IDP_CLIENTSECRET/g" "$(dirname "$0")"/src/lib/scripts/keycloak/identity-providers.sh > "$(dirname "$0")"/src/lib/scripts/keycloak/identity-providers-$i.sh
+        execScriptsOnPod "$(dirname "$0")"/src/lib/scripts/keycloak/identity-providers-$i.sh "keycloak-0" "$VKPR_ENV_KEYCLOAK_NAMESPACE"
+      done
+    fi
+  fi
+
+  if [[ $VKPR_ENV_KEYCLOAK_OPENID_KONG == "true" ]]; then
+    KONG_ADDRESS="https\:\/\/manager.${VKPR_ENV_GLOBAL_DOMAIN}"
+
+    sed -i "s/LOGIN_USERNAME/$VKPR_ENV_KEYCLOAK_ADMIN_USER/g ;
+      s/LOGIN_PASSWORD/$VKPR_ENV_KEYCLOAK_ADMIN_PASSWORD/g ;
+      s/TEMPORARY_PASSWORD/$VKPR_ENV_KEYCLOAK_ADMIN_PASSWORD/g ;
+      s/CLIENT_SECRET/${VKPR_ENV_KEYCLOAK_OPENID_KONG_CLIENTSECRET:-$(uuidgen)}/g ;
+      s/KONG_DOMAIN/$KONG_ADDRESS/g" "$(dirname "$0")"/src/lib/scripts/keycloak/kong-oidc.sh
+    execScriptsOnPod "$(dirname "$0")"/src/lib/scripts/keycloak/kong-oidc.sh "keycloak-0" "$VKPR_ENV_KEYCLOAK_NAMESPACE"
+
+    if [[ $VKPR_ENV_KEYCLOAK_OPENID_KONG_IDENTITY_PROVIDERS != "" ]]; then
+      IDP_LENGTH=$(echo $VKPR_ENV_KEYCLOAK_OPENID_KONG_IDENTITY_PROVIDERS | $VKPR_YQ eval '. | length' -)
+      ((IDP_LENGTH--))
+      for i in $(seq 0 $IDP_LENGTH); do
+        IDP_NAME=$(echo $VKPR_ENV_KEYCLOAK_OPENID_KONG_IDENTITY_PROVIDERS | $VKPR_YQ eval ".[$i].name" -)
+        IDP_CLIENTID=$(echo $VKPR_ENV_KEYCLOAK_OPENID_KONG_IDENTITY_PROVIDERS | $VKPR_YQ eval ".[$i].clientID" -)
+        IDP_CLIENTSECRET=$(echo $VKPR_ENV_KEYCLOAK_OPENID_KONG_IDENTITY_PROVIDERS | $VKPR_YQ eval ".[$i].clientSecret" -)
+
+        sed "s/LOGIN_USERNAME/$VKPR_ENV_KEYCLOAK_ADMIN_USER/g ;
+          s/LOGIN_PASSWORD/$VKPR_ENV_KEYCLOAK_ADMIN_PASSWORD/g ;
+          s/REALM_NAME/kong/g ;
+          s/PROVIDER_NAME/$IDP_NAME/g ;
+          s/CLIENT_ID/$IDP_CLIENTID/g ;
+          s/CLIENT_SECRET/$IDP_CLIENTSECRET/g" "$(dirname "$0")"/src/lib/scripts/keycloak/identity-providers.sh > "$(dirname "$0")"/src/lib/scripts/keycloak/identity-providers-$i.sh
+        execScriptsOnPod "$(dirname "$0")"/src/lib/scripts/keycloak/identity-providers-$i.sh "keycloak-0" "$VKPR_ENV_KEYCLOAK_NAMESPACE"
+      done
+    fi
   fi
 }

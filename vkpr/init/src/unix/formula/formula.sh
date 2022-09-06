@@ -22,11 +22,10 @@ runFormula() {
   validateYQVersion
   installTool "yq" "$VKPR_TOOLS_YQ"
 
+  installAWS
   installOkteto
   installDeck
   installHelm
-
-  installBats
 }
 
 installArkade() {
@@ -40,6 +39,18 @@ installArkade() {
     chmod +x /tmp/arkinst.sh
     rm /tmp/arkinst0.sh
     /tmp/arkinst.sh 2> /dev/null
+  fi
+}
+
+installAWS() {
+  if [[ -f "$VKPR_AWS" ]]; then
+    notice "AWS already installed. Skipping..."
+  else
+    info "Installing AWS..."
+    # patches download script in order to change BINLOCATION
+    curl -sSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
+    unzip -q /tmp/awscliv2.zip -d /tmp
+    /tmp/aws/install -i ~/.vkpr/bin -b ~/.vkpr/bin --update
   fi
 }
 
@@ -95,36 +106,5 @@ installDeck() {
     tar -xf /tmp/deck.tar.gz -C /tmp
     cp /tmp/deck ~/.vkpr/bin
     info "Deck installed!"
-  fi
-}
-
-installBats(){
-  if [[ -f "$VKPR_HOME/bats/bin/bats" ]]; then
-    notice "Bats already installed. Skipping."
-  else
-    info "intalling Bats..."
-    mkdir -p /tmp/bats
-    # bats-core
-    curl -sL -o /tmp/bats-core.tar.gz https://github.com/bats-core/bats-core/archive/refs/tags/v1.4.1.tar.gz
-    tar -xzf /tmp/bats-core.tar.gz -C /tmp
-    mv /tmp/bats-core-1.4.1 /tmp/bats-core
-    /tmp/bats-core/install.sh $VKPR_HOME/bats
-    rm -rf /tmp/bats-core
-
-    info "intalling bats add-ons..."
-    # bats-support
-    #git clone https://github.com/bats-core/bats-support $VKPR_HOME/bats/bats-support
-    curl -sL -o /tmp/bats-support.tar.gz https://github.com/bats-core/bats-support/archive/refs/tags/v0.3.0.tar.gz
-    tar -xzf /tmp/bats-support.tar.gz -C /tmp
-    mv /tmp/bats-support-0.3.0 $VKPR_HOME/bats/bats-support
-    # bats-assert
-    curl -sL -o /tmp/bats-assert.tar.gz https://github.com/bats-core/bats-assert/archive/refs/tags/v2.0.0.tar.gz
-    tar -xzf /tmp/bats-assert.tar.gz -C /tmp
-    mv /tmp/bats-assert-2.0.0 $VKPR_HOME/bats/bats-assert
-    # bats-file
-    curl -sL -o /tmp/bats-file.tar.gz https://github.com/bats-core/bats-file/archive/refs/tags/v0.3.0.tar.gz
-    tar -xzf /tmp/bats-file.tar.gz -C /tmp
-    mv /tmp/bats-file-0.3.0 $VKPR_HOME/bats/bats-file
-    info "Bats add-ons installed"
   fi
 }
