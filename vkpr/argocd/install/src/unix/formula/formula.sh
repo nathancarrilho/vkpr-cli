@@ -12,6 +12,7 @@ runFormula() {
   settingArgoCD
   [ $DRY_RUN = false ] && registerHelmRepository argo https://argoproj.github.io/argo-helm
   installApplication "argocd" "argo/argo-cd" "$VKPR_ENV_ARGOCD_NAMESPACE" "$VKPR_ARGOCD_VERSION" "$VKPR_ARGOCD_VALUES" "$HELM_ARGS" && printArgoPassword
+  settingArgoAddons
 }
 
 startInfos() {
@@ -35,6 +36,7 @@ formulaInputs() {
   checkGlobalConfig "$CRT_FILE" "" "argocd.ssl.crt" "ARGOCD_SSL_CERTIFICATE"
   checkGlobalConfig "$KEY_FILE" "" "argocd.ssl.key" "ARGOCD_SSL_KEY"
   checkGlobalConfig "" "" "argocd.ssl.secretName" "ARGOCD_SSL_SECRET"
+  checkGlobalConfig "false" "false" "argocd.addons.notifications" "ARGOCD_ADDONS_NOTIFICATIONS"
 
   # External apps values
   checkGlobalConfig "$VKPR_ENV_GLOBAL_NAMESPACE" "$VKPR_ENV_GLOBAL_NAMESPACE" "prometheus-stack.namespace" "GRAFANA_NAMESPACE"
@@ -119,4 +121,17 @@ settingArgoCD() {
 printArgoPassword(){
   PASSWORD=$($VKPR_KUBECTL -n "$VKPR_ENV_ARGOCD_NAMESPACE" get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
   notice "Your ArgoCD Super Admin password is ${PASSWORD}, we recommend that it be changed after the first login"
+}
+
+settingArgoAddons(){
+  if [[ "$VKPR_ENV_ARGOCD_ADDONS_NOTIFICATIONS" == true ]]; then
+    boldInfo "Installing ArgoCD Addon Notifications..."
+
+    local VKPR_ARGOCD_NOTIFICATIONS_VALUES; VKPR_ARGOCD_NOTIFICATIONS_VALUES="$(dirname "$0")"/utils/argocd-notifications.yaml
+    local YQ_NOTIFICATIONS_VALUES; YQ_NOTIFICATIONS_VALUES=".args.namespace = \"$VKPR_ENV_ARGOCD_NAMESPACE\""
+
+    $VKPR_YQ eval "$YQ_NOTIFICATIONS_VALUES" "$VKPR_ARGOCD_NOTIFICATIONS_VALUES" \
+    | $VKPR_HELM upgrade -i --version "$VKPR_ARGOCD_ADDON_NOTIFICATIONS_VERSION" \
+      --namespace "$VKPR_ENV_ARGOCD_NAMESPACE" --wait -f - argocd-notifications argo/argocd-notifications
+  fi
 }
