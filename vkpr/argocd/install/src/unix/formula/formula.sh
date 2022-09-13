@@ -134,4 +134,16 @@ settingArgoAddons(){
     | $VKPR_HELM upgrade -i --version "$VKPR_ARGOCD_ADDON_NOTIFICATIONS_VERSION" \
       --namespace "$VKPR_ENV_ARGOCD_NAMESPACE" --wait -f - argocd-notifications argo/argocd-notifications
   fi
+
+  if [[ "$VKPR_ENV_ARGOCD_ADDONS_ROLLOUTS" == true ]]; then
+    boldInfo "Installing ArgoCD Addon Rollouts..."
+
+    local VKPR_ARGOCD_ROLLOUTS_VALUES; VKPR_ARGOCD_ROLLOUTS_VALUES="$(dirname "$0")"/utils/argocd-rollouts.yaml
+    local YQ_ROLLOUTS_VALUES; YQ_ROLLOUTS_VALUES=".args.namespace = \"$VKPR_ENV_ARGOCD_NAMESPACE\""
+
+    $VKPR_YQ eval "$YQ_ROLLOUTS_VALUES" "$VKPR_ARGOCD_ROLLOUTS_VALUES" \
+    | $VKPR_HELM upgrade -i --version "$VKPR_ARGOCD_ADDON_ROLLOUTS_VERSION" \
+      --namespace "$VKPR_ENV_ARGOCD_NAMESPACE" --wait -f - argocd-rollouts argo/argocd-rollouts
+  fi
+
 }
